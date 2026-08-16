@@ -39,14 +39,15 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-// shade_score -> color. Sequential scale: pale/yellow = sunny (low
-// score), dark blue = heavily shaded (high score).
+// shade_score -> color. Diverging red (sunny/hot) -> blue
+// (shaded/cool), matching web/index_route.html -- red/orange for sun
+// exposure reads more intuitively than a sequential yellow-blue scale.
 const SCORE_STOPS = [
-  { max: 0.2, color: '#ffffcc' },
-  { max: 0.4, color: '#c7e9b4' },
-  { max: 0.6, color: '#7fcdbb' },
-  { max: 0.8, color: '#2c7fb8' },
-  { max: Infinity, color: '#253494' },
+  { max: 0.2, color: '#d73027' },
+  { max: 0.4, color: '#fc8d59' },
+  { max: 0.6, color: '#ffffbf' },
+  { max: 0.8, color: '#91bfdb' },
+  { max: Infinity, color: '#4575b4' },
 ];
 
 function colorForScore(score) {

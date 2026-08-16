@@ -22,9 +22,13 @@ single fixed cost: `bike_cost` and `shade_score` are meant to be joined
 onto GraphHopper's OSM edges at request time and combined however a
 given query wants (e.g. `0.7 * shade_cost + 0.3 * bike_cost`).
 
-This repo currently builds two weighting modules and stops there --
-no routing engine, backend, or frontend yet. That's a separate
-follow-up.
+The routing engine is self-hosted GraphHopper (Docker, see
+`graphhopper/`) over a Manhattan OSM extract, plus a thin FastAPI
+backend (`backend/`) that builds the per-request custom_model payload
+and forwards it. See "Routing engine" below for how `bike_cost` and
+`shade_score` actually get attached -- the join turned out not to be
+the OSM-way-tagging approach the architecture note above implies (see
+that section for why). No frontend yet.
 
 ## Directory structure
 
@@ -35,6 +39,8 @@ data/raw/                Downloaded source data (see Datasets below)
 data/processed/          Script outputs
 web/                     Standalone Leaflet pages for visually sanity-checking output
 tests/                   Sanity checks for lib/
+graphhopper/             Docker setup for the self-hosted GraphHopper routing engine
+backend/                 FastAPI wrapper: origin/destination/preference -> GraphHopper route
 ```
 
 Scripts are numbered by run order, starting at 01.
@@ -45,7 +51,12 @@ Scripts are numbered by run order, starting at 01.
 python3 -m venv .venv
 source .venv/bin/activate
 pip install pandas shapely geopandas pyproj pyarrow
+pip install fastapi "uvicorn[standard]" httpx  # backend/ only
 ```
+
+Also requires [Docker](https://www.docker.com/) (running, not just
+installed) to build and serve the GraphHopper graph -- see "Routing
+engine" below.
 
 ## Datasets
 
@@ -116,6 +127,26 @@ Then open `web/index_bike.html` and `web/index_shade.html` (via a local
 server, e.g. `python3 -m http.server` from the repo root, so the
 relative `../data/processed/...` fetches resolve) to see the results on
 a map.
+
+To bring up the routing engine on top of that (see "Routing engine"
+below for the full explanation):
+
+```bash
+python3 scripts/03_parse_osm_ways.py
+python3 scripts/04_validate_block_osm_alignment.py   # QA only, doesn't feed anything downstream
+
+cd graphhopper && docker compose up -d && cd ..        # first boot builds the graph, ~5s for Manhattan
+python3 scripts/05_test_custom_models.py                # curls GraphHopper directly, no backend yet
+
+uvicorn backend.main:app --reload --port 8000           # then the actual API
+```
+
+Then open `web/index_route.html` directly as a `file://` URL (it only
+talks to the backend API, no local data fetches, so it doesn't need a
+server the way the other two web pages do) -- click the map to set an
+origin and destination, pick a preference, and see GraphHopper's actual
+route plus the exact `custom_model` areas that request sent, both
+drawn live.
 
 ### Task 1 -- `scripts/01_bike_preference_score.py`
 
@@ -193,6 +224,98 @@ Outputs:
 - `data/processed/shade_scored_blocks_jun_2pm.geojson` -- one
   representative snapshot (June, 2pm), purely for visual
   sanity-checking on a map.
+
+## Routing engine
+
+`graphhopper/`, `backend/`, and `scripts/03`-`05` turn the weighting
+data above into an actual routable API. Three things the plan going in
+assumed turned out not to match reality, found by probing/checking
+current docs before writing code against them -- the same "confirm,
+don't guess" pattern as the bike-routes resource ID and blockface
+street-name issues above.
+
+**OSM extract: Overpass, not Geofabrik.** Geofabrik only publishes a
+whole-New-York-*state* PBF (~495MB) -- there's no NYC- or
+borough-level extract, so using it would mean downloading the state
+and clipping it down with another tool. A literal NYC bounding-box
+Overpass query comes back ~570k highway ways (that box also covers
+parts of NJ/CT, since it's a rectangle) -- large enough to risk
+Overpass's public-instance timeout/rate limits. Scoped to Manhattan
+only (~121k ways, chosen over full-NYC or UWS-only -- see below),
+Overpass completed cleanly in about a minute. `data/raw/osm/manhattan.osm`
+is that pull; `scripts/03_parse_osm_ways.py` parses it into
+`data/processed/manhattan_osm_ways.geojson` for the alignment check in
+`scripts/04`.
+
+*Why Manhattan, not all 5 boroughs or just the scored UWS box:* the
+scored data (`bike_scored_blocks.geojson`, `shade_index.parquet`) only
+covers ~889 UWS blocks. All 5 boroughs would mean the vast majority of
+the graph has zero score data, for a much larger download/import.
+UWS-only would make GraphHopper unable to route through anything
+outside that box at all. Manhattan is the middle ground: real
+point-to-point routing on a real connected street grid, small enough
+to import in seconds.
+
+**No official GraphHopper Docker image exists.** Checked the
+`graphhopper/graphhopper` repo tree directly (GitHub API, recursive)
+for a Dockerfile -- there isn't one, anywhere. GraphHopper's own docs
+only cover building from Maven source or running the release jar with
+`java -jar`; every `graphhopper/*` image on Docker Hub is a
+third-party community build, often pinned to an older GraphHopper
+version. `graphhopper/Dockerfile` instead containerizes the official
+prebuilt release jar (11.0) straight from GitHub Releases -- no Maven
+build, no compiling GraphHopper's own source, just running an official
+binary artifact in a container GraphHopper doesn't publish themselves.
+
+**`bike_cost`/`shade_score` are attached via custom_model `areas`, not
+a compiled encoded value.** The architecture note above ("joined onto
+GraphHopper's OSM edges") implies tagging OSM ways with our scores as
+real per-edge encoded values, referenced directly in a custom_model
+expression. Checking GraphHopper's current docs and forum (not
+assuming) turned up that this isn't available without modifying
+GraphHopper's own source: a custom encoded value needs a compiled
+`TagParser` + `EncodedValueFactory` registered in
+`DefaultImportRegistry.java`, which lives inside `graphhopper-core`
+itself -- not pluggable via config or a mounted jar. It would also bake
+`shade_score`'s month/hour buckets in at graph-build time, reintroducing
+a rebuild-per-preference problem for shade specifically -- the exact
+thing this project picked GraphHopper over Valhalla to avoid.
+
+Instead, `lib/custom_model_areas.py` groups blocks into a handful of
+cost buckets (`bike_cost` already only takes 4 discrete values;
+`shade_score` is split into 5 quantile buckets for whichever month/hour
+is requested), buffers and unions each bucket's block geometry into
+one polygon, and passes those as `areas` in the custom_model JSON --
+GeoJSON polygons submitted with the request itself, matched to edges
+by GraphHopper's own geometry code, no import step or Java involved.
+This is fully request-time, same as the rest of the architecture: a
+shade query at 8am and one at 2pm rebuild different areas from the
+same `shade_index.parquet`, no graph rebuild. The tradeoff is
+resolution -- an area is a bucket of blocks, not a single OSM way -- but
+forum reports flag GraphHopper's ~100k-character custom_model payload
+ceiling and describe hundreds of individual regions as impractical
+anyway, so bucketing was the right call independent of the encoded-
+value finding.
+
+`scripts/04_validate_block_osm_alignment.py` checks the geometry this
+all depends on before building on top of it: 889/889 scored blocks
+have a real OSM street within 30ft (max 10.6ft) -- the buffer radius
+`lib/custom_model_areas.py` uses (25ft half-width) is sized off that.
+
+**Backend API** (`backend/main.py`): `POST /route` takes `origin`,
+`destination` (`[lat, lon]`), and `preference` (`bike`/`shade`/
+`default` -- not `traffic`; no traffic dataset exists anywhere in this
+repo, see Datasets above), builds the matching custom_model, and
+forwards it to GraphHopper. `shade` additionally takes optional
+`month`/`hour` (defaults to June/2pm, matching the existing
+`shade_scored_blocks_jun_2pm.geojson` snapshot convention) and
+`seek_shade` (default `true`; `false` routes toward sun instead). The
+response includes the `custom_model`'s `areas` alongside the route
+geometry, so a caller can render what actually drove the weighting,
+not just the resulting path -- `web/index_route.html` is that
+renderer. CORS is wide open (`allow_origins=["*"]`) since that page
+calls the API from a `file://` origin; fine for local dev, not
+something to carry into a real deployment.
 
 ## Style note
 

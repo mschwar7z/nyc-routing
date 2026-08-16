@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>NYC Routing -- Route Viewer</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  html, body { height: 100%; margin: 0; font-family: -apple-system, sans-serif; }
+  #map { position: absolute; top: 0; bottom: 0; left: 0; right: 340px; cursor: crosshair; }
+  #panel {
+    position: absolute; top: 0; bottom: 0; right: 0; width: 340px;
+    box-sizing: border-box; padding: 16px; overflow-y: auto;
+    background: #fff; border-left: 1px solid #ddd;
+  }
+  #panel h2 { font-size: 16px; margin: 0 0 4px; }
+  #panel p { font-size: 13px; color: #555; margin: 0 0 12px; }
+  #panel label { display: block; font-size: 12px; color: #888; margin: 12px 0 4px; }
+  #panel select, #panel button {
+    width: 100%; box-sizing: border-box; padding: 6px; font-size: 13px;
+  }
+  #panel button {
+    margin-top: 14px; background: #2c7fb8; color: #fff; border: none;
+    border-radius: 4px; padding: 8px; cursor: pointer; font-weight: 600;
+  }
+  #panel button:disabled { background: #aaa; cursor: default; }
+  #panel button.secondary { background: #eee; color: #333; margin-top: 6px; }
+  .shade-row { display: flex; gap: 8px; }
+  .shade-row select { flex: 1; }
+  .toggle-row { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 13px; }
+  .toggle-row input { margin: 0; }
+  #points { font-size: 13px; margin-top: 4px; }
+  #points .pt { margin-bottom: 2px; }
+  #points .pt.unset { color: #aaa; }
+  #status { font-size: 13px; margin-top: 10px; }
+  #status.error { color: #c0392b; }
+  #status.ok { color: #1a9850; }
+  #detail { border-top: 1px solid #ddd; padding-top: 12px; margin-top: 14px; }
+  #detail table { width: 100%; font-size: 13px; border-collapse: collapse; }
+  #detail td { padding: 3px 0; vertical-align: top; }
+  #detail td:first-child { color: #888; width: 45%; }
+  .legend-row { display: flex; align-items: center; margin: 4px 0; font-size: 12px; }
+  .legend-swatch { width: 14px; height: 14px; margin-right: 8px; border-radius: 2px; opacity: 0.6; flex-shrink: 0; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="panel">
+  <h2>Route viewer</h2>
+  <p>Click the map to set an origin, click again for a destination. The
+     route comes straight from <code>POST /route</code> on the backend
+     (<code>backend/main.py</code>) -- the polyline is GraphHopper's
+     actual response, and the shaded polygons are the exact
+     <code>custom_model</code> areas that request sent to steer it.</p>
+
+  <label for="preference">Preference</label>
+  <select id="preference">
+    <option value="default">Default (no custom weighting)</option>
+    <option value="bike" selected>Bike (prefer protected lanes)</option>
+    <option value="shade">Shade</option>
+  </select>
+
+  <div id="shade-controls" style="display:none;">
+    <label>Shade snapshot</label>
+    <div class="shade-row">
+      <select id="shade-month"></select>
+      <select id="shade-hour"></select>
+    </div>
+    <div class="toggle-row">
+      <input type="checkbox" id="seek-shade" checked>
+      <label for="seek-shade" style="margin:0;">Seek shade (uncheck to avoid it)</label>
+    </div>
+  </div>
+
+  <label>Points</label>
+  <div id="points">
+    <div class="pt unset" id="pt-origin">Origin: click the map</div>
+    <div class="pt unset" id="pt-dest">Destination: click again</div>
+  </div>
+
+  <button id="route-btn" disabled>Route</button>
+  <button id="clear-btn" class="secondary">Clear</button>
+
+  <div id="status"></div>
+  <div id="detail"></div>
+  <div id="legend"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// Same backend the curl examples in the README use. Change this if
+// you started uvicorn on a different host/port.
+const BACKEND_URL = 'http://localhost:8000';
+
+// Same direction/scale as web/index_bike.html and web/index_shade.html,
+// reused here so an area reads the same color whether you're looking
+// at the static score maps or a live route.
+const BIKE_COST_STOPS = [
+  { max: 0.5,  color: '#1a9850', label: 'bike_cost 0.5 (protected)' },
+  { max: 0.75, color: '#91cf60', label: 'bike_cost 0.75 (painted)' },
+  { max: 0.9,  color: '#fee08b', label: 'bike_cost 0.9 (sharrow)' },
+  { max: Infinity, color: '#d73027', label: 'bike_cost 1.5 (no match)' },
+];
+// Diverging red (sunny/hot) -> blue (shaded/cool) -- ColorBrewer
+// RdYlBu-5, reordered low-to-high. The old yellow-green-blue sequential
+// scale was accurate but didn't read as "sunny vs shaded" at a glance;
+// red/orange for sun exposure matches how people actually read heat.
+const SHADE_SCORE_STOPS = [
+  { max: 0.2, color: '#d73027', label: 'shade_score 0.0-0.2 (sunny)' },
+  { max: 0.4, color: '#fc8d59', label: 'shade_score 0.2-0.4' },
+  { max: 0.6, color: '#ffffbf', label: 'shade_score 0.4-0.6' },
+  { max: 0.8, color: '#91bfdb', label: 'shade_score 0.6-0.8' },
+  { max: Infinity, color: '#4575b4', label: 'shade_score 0.8-1.0 (shaded)' },
+];
+
+function stopFor(value, stops) {
+  for (const stop of stops) if (value <= stop.max) return stop;
+  return stops[stops.length - 1];
+}
+
+const map = L.map('map').setView([40.787, -73.975], 14);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; OpenStreetMap contributors',
+  maxZoom: 19,
+}).addTo(map);
+
+let origin = null, dest = null;
+let originMarker = null, destMarker = null;
+let routeLayer = null, areasLayer = null;
+
+const preferenceSelect = document.getElementById('preference');
+const shadeControls = document.getElementById('shade-controls');
+const shadeMonthSelect = document.getElementById('shade-month');
+const shadeHourSelect = document.getElementById('shade-hour');
+const seekShadeCheckbox = document.getElementById('seek-shade');
+const routeBtn = document.getElementById('route-btn');
+const clearBtn = document.getElementById('clear-btn');
+const statusEl = document.getElementById('status');
+const detailEl = document.getElementById('detail');
+const legendEl = document.getElementById('legend');
+const ptOrigin = document.getElementById('pt-origin');
+const ptDest = document.getElementById('pt-dest');
+
+preferenceSelect.addEventListener('change', () => {
+  shadeControls.style.display = preferenceSelect.value === 'shade' ? 'block' : 'none';
+});
+
+// Populates month/hour pickers from what scripts/02 actually computed,
+// rather than assuming -- avoids the picker offering a combination
+// that will 400.
+let snapshotsByMonth = {};
+fetch(`${BACKEND_URL}/shade_snapshots`)
+  .then(r => r.json())
+  .then(pairs => {
+    for (const [month, hour] of pairs) {
+      (snapshotsByMonth[month] ||= []).push(hour);
+    }
+    for (const month of Object.keys(snapshotsByMonth).sort((a, b) => a - b)) {
+      const opt = document.createElement('option');
+      opt.value = month;
+      opt.textContent = new Date(2000, month - 1).toLocaleString('en', { month: 'long' });
+      if (month == 6) opt.selected = true;
+      shadeMonthSelect.appendChild(opt);
+    }
+    populateHours();
+  })
+  .catch(() => {
+    statusEl.className = 'error';
+    statusEl.textContent = `Could not reach backend at ${BACKEND_URL} for /shade_snapshots -- is uvicorn running?`;
+  });
+
+function populateHours() {
+  shadeHourSelect.innerHTML = '';
+  const hours = snapshotsByMonth[shadeMonthSelect.value] || [];
+  for (const hour of hours) {
+    const opt = document.createElement('option');
+    opt.value = hour;
+    opt.textContent = `${hour}:00`;
+    if (hour == 14) opt.selected = true;
+    shadeHourSelect.appendChild(opt);
+  }
+}
+shadeMonthSelect.addEventListener('change', populateHours);
+
+map.on('click', e => {
+  if (!origin) {
+    origin = e.latlng;
+    originMarker = L.marker(origin, { title: 'Origin' }).addTo(map);
+    ptOrigin.className = 'pt';
+    ptOrigin.textContent = `Origin: ${origin.lat.toFixed(5)}, ${origin.lng.toFixed(5)}`;
+  } else if (!dest) {
+    dest = e.latlng;
+    destMarker = L.marker(dest, { title: 'Destination' }).addTo(map);
+    ptDest.className = 'pt';
+    ptDest.textContent = `Destination: ${dest.lat.toFixed(5)}, ${dest.lng.toFixed(5)}`;
+    routeBtn.disabled = false;
+  }
+  // A third click does nothing on purpose -- use Clear to start over,
+  // so a misclick doesn't silently discard a point you just placed.
+});
+
+clearBtn.addEventListener('click', () => {
+  origin = dest = null;
+  if (originMarker) map.removeLayer(originMarker);
+  if (destMarker) map.removeLayer(destMarker);
+  if (routeLayer) map.removeLayer(routeLayer);
+  if (areasLayer) map.removeLayer(areasLayer);
+  originMarker = destMarker = routeLayer = areasLayer = null;
+  ptOrigin.className = 'pt unset';
+  ptOrigin.textContent = 'Origin: click the map';
+  ptDest.className = 'pt unset';
+  ptDest.textContent = 'Destination: click again';
+  routeBtn.disabled = true;
+  statusEl.className = '';
+  statusEl.textContent = '';
+  detailEl.innerHTML = '';
+  legendEl.innerHTML = '';
+});
+
+routeBtn.addEventListener('click', async () => {
+  const preference = preferenceSelect.value;
+  const body = {
+    origin: [origin.lat, origin.lng],
+    destination: [dest.lat, dest.lng],
+    preference,
+  };
+  if (preference === 'shade') {
+    body.month = Number(shadeMonthSelect.value);
+    body.hour = Number(shadeHourSelect.value);
+    body.seek_shade = seekShadeCheckbox.checked;
+  }
+
+  routeBtn.disabled = true;
+  statusEl.className = '';
+  statusEl.textContent = 'Routing...';
+
+  let data;
+  try {
+    const resp = await fetch(`${BACKEND_URL}/route`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || resp.statusText);
+  } catch (err) {
+    statusEl.className = 'error';
+    statusEl.textContent = `Request failed: ${err.message}`;
+    routeBtn.disabled = false;
+    return;
+  }
+  routeBtn.disabled = false;
+  statusEl.className = 'ok';
+  statusEl.textContent = 'Route found.';
+
+  if (routeLayer) map.removeLayer(routeLayer);
+  if (areasLayer) map.removeLayer(areasLayer);
+
+  const stops = preference === 'shade' ? SHADE_SCORE_STOPS : BIKE_COST_STOPS;
+  areasLayer = L.geoJSON(data.areas, {
+    style: feature => ({
+      color: stopFor(feature.properties.value, stops).color,
+      weight: 2,
+      opacity: 0.9,
+      fillOpacity: 0.6,
+      fillColor: stopFor(feature.properties.value, stops).color,
+    }),
+  }).addTo(map);
+
+  routeLayer = L.geoJSON(data.geometry, {
+    style: { color: '#000', weight: 5, opacity: 0.85 },
+  }).addTo(map);
+
+  map.fitBounds(routeLayer.getBounds(), { padding: [30, 30] });
+
+  detailEl.innerHTML = '<table>' + [
+    ['Preference', data.preference],
+    ['Distance', `${data.distance_m.toFixed(0)} m`],
+    ['Time', `${data.time_s.toFixed(0)} s`],
+    ['Weight', data.weight.toFixed(2)],
+    ['Areas sent', data.areas.features.length],
+  ].map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('') + '</table>';
+
+  if (preference === 'default') {
+    legendEl.innerHTML = '<p style="font-size:12px;color:#999;">No custom_model areas for the default preference.</p>';
+  } else {
+    legendEl.innerHTML = '<label>Areas legend</label>' + stops.map(s =>
+      `<div class="legend-row"><span class="legend-swatch" style="background:${s.color}"></span>${s.label}</div>`
+    ).join('');
+  }
+});
+</script>
+</body>
+</html>

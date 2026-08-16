@@ -1,0 +1,65 @@
+graphhopper:
+  datareader.file: /data/manhattan.osm
+  graph.location: /data/graph-cache
+
+  # Only "bike" -- elevation-based bike_elevation.json needs an SRTM
+  # elevation provider set up, which is out of scope here (nothing in
+  # this project's brief calls for elevation-aware routing), so this
+  # profile is plain bike.json only.
+  # "bike.json" resolves to GraphHopper's own built-in custom model
+  # (core/src/main/resources/com/graphhopper/custom_models/bike.json) --
+  # that name is reserved for built-ins; supplying our own file with the
+  # same name fails to start ("already used for built-in profiles").
+  profiles:
+    - name: bike
+      custom_model_files: [bike.json]
+
+  # Deliberately no profiles_ch / profiles_lm entries: CH (speed mode)
+  # doesn't support per-request custom_model changes at all, and this
+  # project's whole point is picking the weighting formula per request
+  # (see README). Flex mode (neither CH nor LM) is the only mode that
+  # keeps every request's custom_model fully live. Manhattan-sized graph
+  # is small enough that flex-mode query latency is fine for this use
+  # case; a citywide graph would need to revisit this (LM/hybrid mode
+  # also supports per-request custom models, just with a preparation
+  # step to speed up flex queries).
+  profiles_ch: []
+  profiles_lm: []
+
+  # Per bike.json's own header comment (core/src/main/resources/com/graphhopper/custom_models/bike.json
+  # in the GraphHopper repo) -- these are exactly what it references
+  # beyond the auto-registered bike_* vehicle encoded values.
+  graph.encoded_values: bike_priority, bike_access, roundabout, bike_average_speed, bike_road_access, foot_road_access, average_slope, mtb_rating, hike_rating, country, road_class
+
+  # Required (GraphHopper refuses to start without it). motorway/trunk
+  # are the standard exclusion for non-motorized routing per
+  # config-example.yml's own comment -- bikes can't legally use them
+  # anyway, so dropping them up front keeps the graph smaller.
+  import.osm.ignored_highways: motorway,trunk
+
+  graph.dataaccess.default_type: RAM_STORE
+  prepare.min_network_size: 200
+  prepare.subnetworks.threads: 1
+  routing.snap_preventions_default: tunnel, bridge, ferry
+  routing.non_ch.max_waypoint_distance: 1000000
+
+server:
+  application_connectors:
+    - type: http
+      port: 8989
+      # 0.0.0.0, not localhost: "localhost" inside the container is
+      # unreachable from the host through Docker's port mapping.
+      bind_host: 0.0.0.0
+      max_request_header_size: 50k
+  request_log:
+    appenders: []
+  admin_connectors:
+    - type: http
+      port: 8990
+      bind_host: 0.0.0.0
+
+logging:
+  appenders:
+    - type: console
+      time_zone: UTC
+      log_format: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
