@@ -1,0 +1,22 @@
+services:
+  graphhopper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8989:8989"
+    volumes:
+      - ../data/raw/osm/manhattan.osm:/data/manhattan.osm:ro
+      - ./config.yml:/app/config.yml:ro
+      - graph-cache:/data/graph-cache
+    # First boot builds the graph from manhattan.osm into graph-cache
+    # (slow); subsequent restarts reuse the cached graph and start fast,
+    # as long as manhattan.osm and config.yml haven't changed.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8989/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  graph-cache:
