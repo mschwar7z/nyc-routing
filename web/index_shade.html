@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>NYC Routing -- Shade Index</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  html, body { height: 100%; margin: 0; font-family: -apple-system, sans-serif; }
+  #map { position: absolute; top: 0; bottom: 0; left: 0; right: 320px; }
+  #panel {
+    position: absolute; top: 0; bottom: 0; right: 0; width: 320px;
+    box-sizing: border-box; padding: 16px; overflow-y: auto;
+    background: #fff; border-left: 1px solid #ddd;
+  }
+  #panel h2 { font-size: 16px; margin: 0 0 8px; }
+  #panel p { font-size: 13px; color: #555; margin: 0 0 16px; }
+  .legend-row { display: flex; align-items: center; margin-bottom: 6px; font-size: 13px; }
+  .legend-swatch { width: 16px; height: 4px; margin-right: 8px; }
+  #detail { border-top: 1px solid #ddd; padding-top: 12px; margin-top: 12px; }
+  #detail table { width: 100%; font-size: 13px; border-collapse: collapse; }
+  #detail td { padding: 3px 0; vertical-align: top; }
+  #detail td:first-child { color: #888; width: 40%; }
+  #detail .empty { color: #999; font-size: 13px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="panel">
+  <h2>Shade index -- June, 2pm</h2>
+  <p>shade_score is the fraction of the block in shadow at this moment (1.0 =
+     fully shaded). HIGH means heavily shaded: a shade-seeking route should
+     cost it as (1 - shade_score); a shade-avoiding route should cost it as
+     shade_score directly. This single snapshot is a visual sanity check --
+     the full (block, month, hour) table routing will actually use is
+     data/processed/shade_index.parquet.</p>
+  <div id="legend"></div>
+  <div id="detail"><p class="empty">Click a street segment to see its details.</p></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// shade_score -> color. Sequential scale: pale/yellow = sunny (low
+// score), dark blue = heavily shaded (high score).
+const SCORE_STOPS = [
+  { max: 0.2, color: '#ffffcc' },
+  { max: 0.4, color: '#c7e9b4' },
+  { max: 0.6, color: '#7fcdbb' },
+  { max: 0.8, color: '#2c7fb8' },
+  { max: Infinity, color: '#253494' },
+];
+
+function colorForScore(score) {
+  for (const stop of SCORE_STOPS) {
+    if (score <= stop.max) return stop.color;
+  }
+  return SCORE_STOPS[SCORE_STOPS.length - 1].color;
+}
+
+const legend = document.getElementById('legend');
+const legendLabels = ['0.0 - 0.2 (sunny)', '0.2 - 0.4', '0.4 - 0.6', '0.6 - 0.8', '0.8 - 1.0 (shaded)'];
+SCORE_STOPS.forEach((stop, i) => {
+  const row = document.createElement('div');
+  row.className = 'legend-row';
+  row.innerHTML = `<span class="legend-swatch" style="background:${stop.color}"></span>${legendLabels[i]}`;
+  legend.appendChild(row);
+});
+
+const map = L.map('map').setView([40.785, -73.977], 14);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; OpenStreetMap contributors',
+  maxZoom: 19,
+}).addTo(map);
+
+const detail = document.getElementById('detail');
+function showDetail(props) {
+  const rows = [
+    ['Borough', props.borough],
+    ['Block ID', props.block_id],
+    ['Shade score', props.shade_score],
+  ];
+  detail.innerHTML = '<table>' + rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('') + '</table>';
+}
+
+fetch('../data/processed/shade_scored_blocks_jun_2pm.geojson')
+  .then(r => r.json())
+  .then(data => {
+    L.geoJSON(data, {
+      style: feature => ({
+        color: colorForScore(feature.properties.shade_score),
+        weight: 4,
+        opacity: 0.9,
+      }),
+      onEachFeature: (feature, layer) => {
+        layer.on('click', () => showDetail(feature.properties));
+      },
+    }).addTo(map);
+  })
+  .catch(err => {
+    detail.innerHTML = `<p class="empty">Could not load data/processed/shade_scored_blocks_jun_2pm.geojson -- run scripts/02_build_shade_index.py first. (${err})</p>`;
+  });
+</script>
+</body>
+</html>

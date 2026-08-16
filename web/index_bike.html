@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>NYC Routing -- Bike Preference</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  html, body { height: 100%; margin: 0; font-family: -apple-system, sans-serif; }
+  #map { position: absolute; top: 0; bottom: 0; left: 0; right: 320px; }
+  #panel {
+    position: absolute; top: 0; bottom: 0; right: 0; width: 320px;
+    box-sizing: border-box; padding: 16px; overflow-y: auto;
+    background: #fff; border-left: 1px solid #ddd;
+  }
+  #panel h2 { font-size: 16px; margin: 0 0 8px; }
+  #panel p { font-size: 13px; color: #555; margin: 0 0 16px; }
+  .legend-row { display: flex; align-items: center; margin-bottom: 6px; font-size: 13px; }
+  .legend-swatch { width: 16px; height: 4px; margin-right: 8px; }
+  #detail { border-top: 1px solid #ddd; padding-top: 12px; margin-top: 12px; }
+  #detail table { width: 100%; font-size: 13px; border-collapse: collapse; }
+  #detail td { padding: 3px 0; vertical-align: top; }
+  #detail td:first-child { color: #888; width: 40%; }
+  #detail .empty { color: #999; font-size: 13px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="panel">
+  <h2>Bike preference cost</h2>
+  <p>Lower bike_cost = better bike infrastructure = cheaper for GraphHopper's
+     custom weighting formula to route over. Click a block for details.</p>
+  <div id="legend"></div>
+  <div id="detail"><p class="empty">Click a street segment to see its details.</p></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// bike_cost -> color. Cheap/preferred (protected) = green,
+// expensive/no infra = red -- same direction a routing cost should read in.
+const COST_STOPS = [
+  { max: 0.5,  color: '#1a9850', label: 'Protected (0.5)' },
+  { max: 0.75, color: '#91cf60', label: 'Painted (0.75)' },
+  { max: 0.9,  color: '#fee08b', label: 'Sharrow (0.9)' },
+  { max: Infinity, color: '#d73027', label: 'No match (1.5)' },
+];
+
+function colorForCost(cost) {
+  for (const stop of COST_STOPS) {
+    if (cost <= stop.max) return stop.color;
+  }
+  return COST_STOPS[COST_STOPS.length - 1].color;
+}
+
+const legend = document.getElementById('legend');
+for (const stop of COST_STOPS) {
+  const row = document.createElement('div');
+  row.className = 'legend-row';
+  row.innerHTML = `<span class="legend-swatch" style="background:${stop.color}"></span>${stop.label}`;
+  legend.appendChild(row);
+}
+
+const map = L.map('map').setView([40.785, -73.977], 14);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; OpenStreetMap contributors',
+  maxZoom: 19,
+}).addTo(map);
+
+const detail = document.getElementById('detail');
+function showDetail(props) {
+  const rows = [
+    ['Street', props.st_name || '(no nearby bike route to borrow a name from)'],
+    ['Borough', props.borough],
+    ['Block ID', props.block_id],
+    ['Bike facility', props.bike_facility || 'None'],
+    ['Bike cost', props.bike_cost],
+  ];
+  detail.innerHTML = '<table>' + rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('') + '</table>';
+}
+
+fetch('../data/processed/bike_scored_blocks.geojson')
+  .then(r => r.json())
+  .then(data => {
+    L.geoJSON(data, {
+      style: feature => ({
+        color: colorForCost(feature.properties.bike_cost),
+        weight: 4,
+        opacity: 0.85,
+      }),
+      onEachFeature: (feature, layer) => {
+        layer.on('click', () => showDetail(feature.properties));
+      },
+    }).addTo(map);
+  })
+  .catch(err => {
+    detail.innerHTML = `<p class="empty">Could not load data/processed/bike_scored_blocks.geojson -- run scripts/01_bike_preference_score.py first. (${err})</p>`;
+  });
+</script>
+</body>
+</html>
