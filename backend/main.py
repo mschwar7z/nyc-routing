@@ -496,6 +496,30 @@ def route_query(req: RouteQueryRequest):
     )
 
 
+class ShadeBlocksResponse(BaseModel):
+    month: int  # resolved snapshot actually used, not necessarily what was requested
+    hour: int
+    geojson: dict  # GeoJSON FeatureCollection, WGS84 -- block_id, st_name, borough, shade_score, geometry
+
+
+@app.get("/api/shade-blocks", response_model=ShadeBlocksResponse)
+def shade_blocks(month: Optional[int] = None, hour: Optional[int] = None):
+    """Blocks + shade_score for whichever precomputed (month, hour)
+    snapshot is nearest to the requested one (or nearest to right now,
+    if month/hour aren't given) -- see _resolve_shade_snapshot. No
+    shadow-casting happens here; scripts/02 already computed every
+    snapshot into shade_index.parquet, this just joins it against block
+    geometry on request."""
+    resolved_month, resolved_hour = _resolve_shade_snapshot(month, hour)
+    snapshot = shade_df[(shade_df["month"] == resolved_month) & (shade_df["hour"] == resolved_hour)]
+    joined = blocks_gdf.merge(snapshot[["block_id", "shade_score"]], on="block_id", how="inner")
+    return ShadeBlocksResponse(
+        month=resolved_month,
+        hour=resolved_hour,
+        geojson=json.loads(joined.to_json()),
+    )
+
+
 @app.get("/shade_snapshots")
 def shade_snapshots():
     """(month, hour) pairs scripts/02 actually computed -- lets callers

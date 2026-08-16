@@ -78,8 +78,8 @@
 <div id="time-marker"></div>
 <div id="panel">
   <div id="page-nav">
-    <a href="index_shade.html" class="active">Shade Index</a>
-    <a href="index_bike.html">Bike Preference</a>
+    <a href="index_shade.html" class="active">Shade Path</a>
+    <a href="index_bike.html">Bike Path</a>
   </div>
   <div id="app-header">
     <h1>Safe Travels NYC</h1>
@@ -314,45 +314,80 @@ function showDetail(props) {
   detail.innerHTML = '<table>' + rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('') + '</table>';
 }
 
-const SHADE_DATA_FILE = '../data/processed/shade_scored_blocks_jun_2pm.geojson';
+const MONTH_NAMES = [
+  '', 'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
 
-const MONTH_NAMES = {
-  jan: 'January', feb: 'February', mar: 'March', apr: 'April',
-  may: 'May', jun: 'June', jul: 'July', aug: 'August',
-  sep: 'September', oct: 'October', nov: 'November', dec: 'December',
-};
-
-function describeShadeDataFile(path) {
-  const match = /_([a-z]{3})_(\d{1,2})(am|pm)\.geojson$/i.exec(path);
-  if (!match) return null;
-  const month = MONTH_NAMES[match[1].toLowerCase()];
-  if (!month) return null;
-  const hour = `${match[2]}:00 ${match[3].toUpperCase()}`;
-  return `${month} · ${hour}`;
+function describeSnapshot(month, hour) {
+  const hour12 = hour % 12 || 12;
+  const ampm = hour < 12 ? 'AM' : 'PM';
+  return `${MONTH_NAMES[month]} · ${hour12}:00 ${ampm}`;
 }
 
-const timeMarkerLabel = describeShadeDataFile(SHADE_DATA_FILE);
-if (timeMarkerLabel) {
-  document.getElementById('time-marker').textContent = timeMarkerLabel;
+// Keyed on the visitor's real current (month, hour) -- the shade data
+// itself only varies at that granularity (see scripts/02: fixed day-15
+// snapshots), so any page load within the same hour reuses this instead
+// of re-hitting the backend.
+const SHADE_BLOCKS_CACHE_KEY = 'shadeBlocksCache';
+
+function loadCachedShadeBlocks(realMonth, realHour) {
+  let cached;
+  try {
+    cached = JSON.parse(localStorage.getItem(SHADE_BLOCKS_CACHE_KEY));
+  } catch (err) {
+    return null; // corrupt cache entry -- ignore and refetch
+  }
+  if (cached && cached.realMonth === realMonth && cached.realHour === realHour) return cached;
+  return null;
 }
 
-fetch(SHADE_DATA_FILE)
-  .then(r => r.json())
-  .then(data => {
-    L.geoJSON(data, {
-      style: feature => ({
-        color: colorForScore(feature.properties.shade_score),
-        weight: 4,
-        opacity: 0.9,
-      }),
-      onEachFeature: (feature, layer) => {
-        layer.on('click', () => showDetail(feature.properties));
-      },
-    }).addTo(map);
-  })
-  .catch(err => {
-    detail.innerHTML = `<p class="empty">Could not load data/processed/shade_scored_blocks_jun_2pm.geojson -- run scripts/02_build_shade_index.py first. (${err})</p>`;
-  });
+function cacheShadeBlocks(entry) {
+  try {
+    localStorage.setItem(SHADE_BLOCKS_CACHE_KEY, JSON.stringify(entry));
+  } catch (err) {
+    // storage full/unavailable -- non-fatal, just skip caching
+  }
+}
+
+function renderShadeBlocks(geojson) {
+  L.geoJSON(geojson, {
+    style: feature => ({
+      color: colorForScore(feature.properties.shade_score),
+      weight: 4,
+      opacity: 0.9,
+    }),
+    onEachFeature: (feature, layer) => {
+      layer.on('click', () => showDetail(feature.properties));
+    },
+  }).addTo(map);
+}
+
+const timeMarker = document.getElementById('time-marker');
+const now = new Date();
+const realMonth = now.getMonth() + 1;
+const realHour = now.getHours();
+
+const cached = loadCachedShadeBlocks(realMonth, realHour);
+if (cached) {
+  timeMarker.textContent = describeSnapshot(cached.resolvedMonth, cached.resolvedHour);
+  renderShadeBlocks(cached.geojson);
+} else {
+  fetch(`http://localhost:8000/api/shade-blocks?month=${realMonth}&hour=${realHour}`)
+    .then(r => r.json())
+    .then(data => {
+      timeMarker.textContent = describeSnapshot(data.month, data.hour);
+      renderShadeBlocks(data.geojson);
+      cacheShadeBlocks({
+        realMonth, realHour,
+        resolvedMonth: data.month, resolvedHour: data.hour,
+        geojson: data.geojson,
+      });
+    })
+    .catch(err => {
+      detail.innerHTML = `<p class="empty">Could not load shade data from the backend -- is uvicorn running on localhost:8000? (${err})</p>`;
+    });
+}
 </script>
 </body>
 </html>
