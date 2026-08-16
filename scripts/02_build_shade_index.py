@@ -24,11 +24,9 @@ Outputs:
       One representative (month, hour) slice, purely for eyeballing on
       a map that the numbers look sane (see web/index_shade.html).
 
-FIRST-PASS SCOPE
+SCOPE
 -------------------
-Only 3 months (Jan/Jun/Oct 15th, as winter/summer/shoulder stand-ins)
-and hourly 7am-7pm. See MONTHS below -- expanding to all 12 months
-later is a one-line change.
+All 12 months (15th of each) and hourly 6am-7pm.
 """
 
 import datetime
@@ -53,11 +51,8 @@ representative_output_path = (
 WGS84 = "EPSG:4326"
 STATE_PLANE_FT = "EPSG:2263"
 
-# Winter/summer/shoulder stand-ins for the first pass. To expand to all
-# twelve months later, this is the only line that needs to change:
-#   MONTHS = [(m, 15) for m in range(1, 13)]
-MONTHS = [(1, 15), (6, 15), (10, 15)]
-HOURS = range(7, 20)  # 7am-7pm, hourly, Eastern Standard Time (see lib/solar_geometry.py)
+MONTHS = [(m, 15) for m in range(1, 13)]
+HOURS = range(6, 20)  # 6am-7pm, hourly, Eastern Standard Time (see lib/solar_geometry.py)
 
 # Only day-of-year feeds the solar math (see lib/solar_geometry.py), so
 # the specific year is arbitrary -- it shifts Jan 15/Oct 15's exact

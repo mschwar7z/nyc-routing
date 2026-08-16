@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 .claude/
+.env
 data/raw/*
 data/processed/*
 !data/raw/.gitkeep

@@ -4,40 +4,104 @@
 <meta charset="UTF-8">
 <title>NYC Routing -- Shade Index</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  html, body { height: 100%; margin: 0; font-family: -apple-system, sans-serif; }
+  html, body { height: 100%; margin: 0; font-family: "Inter", system-ui, -apple-system, sans-serif; font-size: 15px; color: #1a1a2e; }
   #map { position: absolute; top: 0; bottom: 0; left: 0; right: 320px; }
   #panel {
     position: absolute; top: 0; bottom: 0; right: 0; width: 320px;
     box-sizing: border-box; padding: 16px; overflow-y: auto;
     background: #fff; border-left: 1px solid #ddd;
   }
-  #panel h2 { font-size: 16px; margin: 0 0 8px; }
-  #panel p { font-size: 13px; color: #555; margin: 0 0 16px; }
-  .legend-row { display: flex; align-items: center; margin-bottom: 6px; font-size: 13px; }
-  .legend-swatch { width: 16px; height: 4px; margin-right: 8px; }
+  #panel h2 { font-size: 16px; font-weight: 600; margin: 0 0 8px; }
+  #panel p { font-size: 14px; font-weight: 400; color: #555; line-height: 1.5; margin: 0 0 16px; }
+  #app-header { margin-bottom: 18px; }
+  #app-header h1 { font-size: 20px; font-weight: 700; margin: 0 0 6px; letter-spacing: -0.01em; }
+  #app-header p { font-size: 13px; font-weight: 400; color: #7a7a8c; line-height: 1.5; margin: 0; }
+  .legend-row { display: flex; align-items: center; margin-bottom: 6px; font-size: 14px; }
+  .legend-swatch { width: 16px; height: 4px; margin-right: 8px; flex: none; }
   #detail { border-top: 1px solid #ddd; padding-top: 12px; margin-top: 12px; }
-  #detail table { width: 100%; font-size: 13px; border-collapse: collapse; }
+  #detail table { width: 100%; font-size: 14px; border-collapse: collapse; }
   #detail td { padding: 3px 0; vertical-align: top; }
   #detail td:first-child { color: #888; width: 40%; }
-  #detail .empty { color: #999; font-size: 13px; }
+  #detail .empty { color: #999; font-size: 14px; }
+  #route-search { border-bottom: 1px solid #ddd; padding-bottom: 14px; margin-bottom: 14px; }
+  #route-search h2 { font-size: 16px; font-weight: 600; margin: 0 0 8px; }
+  #route-form { display: flex; align-items: flex-end; gap: 8px; }
+  #route-query {
+    box-sizing: border-box;
+    flex: 1; min-width: 0; padding: 11px 14px; font-family: inherit; font-size: 14px;
+    line-height: 1.4; border: 1px solid #d8dbe2; border-radius: 18px; background: #fff;
+    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04); outline: none; resize: none;
+    overflow-y: hidden; max-height: 200px;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  #route-query:focus { border-color: #2b6cb0; box-shadow: 0 0 0 3px rgba(43, 108, 176, 0.15); }
+  #route-form button {
+    flex: none; padding: 11px 20px; font-family: inherit; font-size: 14px; font-weight: 600; border: none;
+    border-radius: 999px; background: #2b6cb0; color: #fff; cursor: pointer;
+    transition: background 0.15s ease;
+  }
+  #route-form button:hover:not(:disabled) { background: #235a95; }
+  #route-form button:disabled { background: #999; cursor: default; }
+  #route-status { margin-top: 8px; font-size: 14px; }
+  #route-status.error { color: #c0392b; }
+  #route-status.success { color: #1a7a3c; }
+  #route-directions { list-style: decimal; margin: 10px 0 0; padding-left: 20px; font-size: 14px; color: #333; }
+  #route-directions li { margin-bottom: 6px; }
+  #route-directions .leg-distance { color: #888; }
+  #download-pdf-btn {
+    margin-top: 10px; padding: 9px 16px; font-family: inherit; font-size: 14px; font-weight: 500;
+    border: 1px solid #2b6cb0; border-radius: 999px; background: #fff; color: #2b6cb0; cursor: pointer;
+    transition: background 0.15s ease;
+  }
+  #download-pdf-btn:hover:not(:disabled) { background: #f0f6fc; }
+  #download-pdf-btn:disabled { border-color: #ccc; color: #aaa; cursor: default; }
+  #page-nav { display: flex; gap: 8px; margin-bottom: 14px; }
+  #page-nav a {
+    flex: 1; text-align: center; padding: 6px 8px; font-size: 13px; font-weight: 500; border-radius: 4px;
+    text-decoration: none; color: #2b6cb0; border: 1px solid #2b6cb0;
+  }
+  #page-nav a.active { background: #2b6cb0; color: #fff; cursor: default; pointer-events: none; }
+  #time-marker {
+    position: absolute; bottom: 16px; right: 336px; z-index: 1000;
+    background: #fff; border: 1px solid #ddd; border-radius: 999px;
+    padding: 6px 14px; font-size: 13px; font-weight: 500; color: #1a1a2e;
+    box-shadow: 0 1px 4px rgba(16, 24, 40, 0.12);
+  }
 </style>
 </head>
 <body>
 <div id="map"></div>
+<div id="time-marker"></div>
 <div id="panel">
-  <h2>Shade index -- June, 2pm</h2>
-  <p>shade_score is the fraction of the block in shadow at this moment (1.0 =
-     fully shaded). HIGH means heavily shaded: a shade-seeking route should
-     cost it as (1 - shade_score); a shade-avoiding route should cost it as
-     shade_score directly. This single snapshot is a visual sanity check --
-     the full (block, month, hour) table routing will actually use is
-     data/processed/shade_index.parquet.</p>
+  <div id="page-nav">
+    <a href="index_shade.html" class="active">Shade Index</a>
+    <a href="index_bike.html">Bike Preference</a>
+  </div>
+  <div id="app-header">
+    <h1>Safe Travels NYC</h1>
+    <p>This app helps you plan a safer route — walk through the shade during extreme heat waves, or switch to Bike Path View to find a route through protected bike paths.</p>
+  </div>
+  <div id="route-search">
+    <h2>Enter your route</h2>
+    <form id="route-form">
+      <textarea id="route-query" rows="2" placeholder='"from my location to Grand Central, most shade at 4pm"'></textarea>
+      <button type="submit">Go</button>
+    </form>
+    <div id="route-status"></div>
+    <ol id="route-directions"></ol>
+    <button id="download-pdf-btn" type="button" disabled>Download directions (PDF)</button>
+  </div>
+  <h2>Shade Map Key</h2>
   <div id="legend"></div>
   <div id="detail"><p class="empty">Click a street segment to see its details.</p></div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
 <script>
 // shade_score -> color. Diverging red (sunny/hot) -> blue
 // (shaded/cool), matching web/index_route.html -- red/orange for sun
@@ -58,7 +122,7 @@ function colorForScore(score) {
 }
 
 const legend = document.getElementById('legend');
-const legendLabels = ['0.0 - 0.2 (sunny)', '0.2 - 0.4', '0.4 - 0.6', '0.6 - 0.8', '0.8 - 1.0 (shaded)'];
+const legendLabels = ['Mostly sun', 'Some sun', 'Mixed sun and shade', 'Some shade', 'Lots of shade'];
 SCORE_STOPS.forEach((stop, i) => {
   const row = document.createElement('div');
   row.className = 'legend-row';
@@ -72,6 +136,174 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19,
 }).addTo(map);
 
+// Separate layer group so a computed route never mixes into the
+// shade-score block-coloring layer below -- distinct style, own group.
+const routeLayer = L.layerGroup().addTo(map);
+const routeForm = document.getElementById('route-form');
+const routeQueryInput = document.getElementById('route-query');
+const routeStatus = document.getElementById('route-status');
+const routeDirections = document.getElementById('route-directions');
+const downloadPdfBtn = document.getElementById('download-pdf-btn');
+let lastRoute = null; // { query, summary, directions } -- feeds the PDF download
+
+function autoResizeQuery() {
+  routeQueryInput.style.height = 'auto';
+  const newHeight = Math.min(routeQueryInput.scrollHeight, 200);
+  routeQueryInput.style.height = `${newHeight}px`;
+  routeQueryInput.style.overflowY = routeQueryInput.scrollHeight > 200 ? 'auto' : 'hidden';
+}
+routeQueryInput.addEventListener('input', autoResizeQuery);
+routeQueryInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    routeForm.requestSubmit();
+  }
+});
+
+const STEP_LABELS = {
+  llm_parse: 'Understanding query',
+  geocode_origin: 'Finding origin',
+  geocode_destination: 'Finding destination',
+  missing_origin: 'Missing origin',
+  unsupported_preference: 'Unsupported preference',
+  routing: 'Computing route',
+};
+
+function impliesCurrentLocation(query) {
+  return /\bmy (current )?location\b|\bwhere i am\b|\bmy position\b|\bfrom here\b/i.test(query);
+}
+
+function getCurrentPosition() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('Geolocation is not supported by this browser.'));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      pos => resolve([pos.coords.latitude, pos.coords.longitude]),
+      err => reject(new Error(err.message)),
+      { timeout: 10000 },
+    );
+  });
+}
+
+function setRouteStatus(message, kind) {
+  routeStatus.textContent = message;
+  routeStatus.className = kind || '';
+}
+
+function formatDistance(meters) {
+  const miles = meters * 0.000621371;
+  if (miles < 0.1) return `${Math.round(meters * 3.28084)} ft`;
+  return `${miles.toFixed(1)} mi`;
+}
+
+function renderDirections(directions) {
+  routeDirections.innerHTML = '';
+  for (const step of directions || []) {
+    const li = document.createElement('li');
+    li.textContent = step.distance_m > 0 ? `${step.text} (${formatDistance(step.distance_m)})` : step.text;
+    routeDirections.appendChild(li);
+  }
+}
+
+downloadPdfBtn.addEventListener('click', () => {
+  if (!lastRoute) return;
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const marginX = 14;
+  const pageBottom = 280;
+  let y = 18;
+
+  doc.setFontSize(16);
+  doc.text('NYC Route Directions', marginX, y);
+  y += 9;
+
+  doc.setFontSize(10);
+  doc.setTextColor(90);
+  for (const line of doc.splitTextToSize(`Query: ${lastRoute.query}`, 180)) {
+    doc.text(line, marginX, y);
+    y += 5;
+  }
+  y += 3;
+
+  doc.setFontSize(11);
+  doc.setTextColor(26, 122, 60);
+  for (const line of doc.splitTextToSize(lastRoute.summary, 180)) {
+    doc.text(line, marginX, y);
+    y += 6;
+  }
+  y += 4;
+
+  doc.setFontSize(11);
+  doc.setTextColor(20);
+  (lastRoute.directions || []).forEach((step, i) => {
+    const label = step.distance_m > 0 ? `${i + 1}. ${step.text} (${formatDistance(step.distance_m)})` : `${i + 1}. ${step.text}`;
+    const lines = doc.splitTextToSize(label, 180);
+    if (y + lines.length * 6 > pageBottom) {
+      doc.addPage();
+      y = 18;
+    }
+    for (const line of lines) {
+      doc.text(line, marginX, y);
+      y += 6;
+    }
+  });
+
+  doc.save('nyc-route-directions.pdf');
+});
+
+routeForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const query = routeQueryInput.value.trim();
+  if (!query) return;
+
+  const submitButton = routeForm.querySelector('button');
+  submitButton.disabled = true;
+  routeLayer.clearLayers();
+  renderDirections([]);
+  lastRoute = null;
+  downloadPdfBtn.disabled = true;
+  setRouteStatus('Working on it...', '');
+
+  let originCoords = null;
+  if (impliesCurrentLocation(query)) {
+    try {
+      originCoords = await getCurrentPosition();
+    } catch (err) {
+      setRouteStatus(`Could not get your location: ${err.message}`, 'error');
+      submitButton.disabled = false;
+      return;
+    }
+  }
+
+  try {
+    const res = await fetch('http://localhost:8000/api/route-query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, origin_coords: originCoords }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      const label = STEP_LABELS[data.step] || data.step || 'Request failed';
+      setRouteStatus(`${label}: ${data.message || 'unknown error'}`, 'error');
+      return;
+    }
+    const geoLayer = L.geoJSON(data.geometry, {
+      style: { color: '#1a1a2e', weight: 6, opacity: 0.9, dashArray: '1, 8' },
+    }).addTo(routeLayer);
+    map.fitBounds(geoLayer.getBounds(), { padding: [40, 40] });
+    setRouteStatus(data.summary, 'success');
+    renderDirections(data.directions);
+    lastRoute = { query, summary: data.summary, directions: data.directions };
+    downloadPdfBtn.disabled = false;
+  } catch (err) {
+    setRouteStatus(`Network error reaching the backend: ${err.message}`, 'error');
+  } finally {
+    submitButton.disabled = false;
+  }
+});
+
 const detail = document.getElementById('detail');
 function showDetail(props) {
   const rows = [
@@ -82,7 +314,29 @@ function showDetail(props) {
   detail.innerHTML = '<table>' + rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('') + '</table>';
 }
 
-fetch('../data/processed/shade_scored_blocks_jun_2pm.geojson')
+const SHADE_DATA_FILE = '../data/processed/shade_scored_blocks_jun_2pm.geojson';
+
+const MONTH_NAMES = {
+  jan: 'January', feb: 'February', mar: 'March', apr: 'April',
+  may: 'May', jun: 'June', jul: 'July', aug: 'August',
+  sep: 'September', oct: 'October', nov: 'November', dec: 'December',
+};
+
+function describeShadeDataFile(path) {
+  const match = /_([a-z]{3})_(\d{1,2})(am|pm)\.geojson$/i.exec(path);
+  if (!match) return null;
+  const month = MONTH_NAMES[match[1].toLowerCase()];
+  if (!month) return null;
+  const hour = `${match[2]}:00 ${match[3].toUpperCase()}`;
+  return `${month} · ${hour}`;
+}
+
+const timeMarkerLabel = describeShadeDataFile(SHADE_DATA_FILE);
+if (timeMarkerLabel) {
+  document.getElementById('time-marker').textContent = timeMarkerLabel;
+}
+
+fetch(SHADE_DATA_FILE)
   .then(r => r.json())
   .then(data => {
     L.geoJSON(data, {

@@ -210,12 +210,10 @@ isolation (`tests/test_shadow_casting.py`).
   - All shadow geometry runs in EPSG:2263 feet; only the final GeoJSON
     output is reprojected back to WGS84.
 - **`scripts/02_build_shade_index.py`** -- orchestrator only, no math.
-  First pass covers 3 months (Jan/Jun/Oct 15th, as winter/summer/
-  shoulder stand-ins -- `MONTHS` is a one-line change to expand to all
-  12) x hourly 7am-7pm. Calls `solar_position` once per (month, hour)
-  -- not per building, since sun angle is effectively uniform citywide
-  at a given moment -- then `score_segment` for every block against
-  nearby buildings.
+  Covers all 12 months (15th of each) x hourly 6am-7pm. Calls
+  `solar_position` once per (month, hour) -- not per building, since
+  sun angle is effectively uniform citywide at a given moment -- then
+  `score_segment` for every block against nearby buildings.
 
 Outputs:
 - `data/processed/shade_index.parquet` -- `block_id, month, hour,
