@@ -1,0 +1,38 @@
+html, body {
+  height: 100%;
+  margin: 0;
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  background: #0f0f10;
+  color: #e5e5e5;
+  overflow: hidden;
+}
+
+#map { position: absolute; inset: 0; }
+
+.glass-panel {
+  background: rgba(24, 24, 27, 0.75);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.panel-hidden { transform: translateY(20px); opacity: 0; pointer-events: none; }
+
+#route-query { max-height: 160px; }
+
+.legend-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #d4d4d8; }
+.legend-swatch { width: 14px; height: 4px; border-radius: 2px; flex: none; }
+
+#time-marker {
+  font-size: 13px; font-weight: 500; color: #e5e5e5;
+}
+
+.leaflet-control-zoom { border: none !important; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important; }
+.leaflet-control-zoom a { background: #18181b !important; color: #e5e5e5 !important; border-color: rgba(255, 255, 255, 0.08) !important; }
+.leaflet-control-attribution { background: rgba(0, 0, 0, 0.55) !important; color: #9ca3af !important; }
+.leaflet-control-attribution a { color: #9ca3af !important; }
+
+.dark-scroll::-webkit-scrollbar { width: 6px; }
+.dark-scroll::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 3px; }
+.dark-scroll::-webkit-scrollbar-track { background: transparent; }
